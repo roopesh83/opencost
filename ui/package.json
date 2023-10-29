@@ -29,14 +29,15 @@
     "react": "^17.0.1",
     "react-dom": "^17.0.1",
     "react-router-dom": "^5.2.0",
-    "recharts": "^2.2.0"
+    "recharts": "^2.2.0",
+    "querystring-es3": "^0.2.1"
   },
   "devDependencies": {
-    "@babel/core": "^7.13.10",
+    "@babel/core": "^7.23.2",
     "@babel/plugin-proposal-class-properties": "^7.13.0",
     "@babel/plugin-transform-runtime": "^7.13.10",
     "@babel/preset-react": "^7.12.13",
-    "parcel": "^2.2.1",
+    "parcel": "^2.2.1",    
     "set-value": "4.0.1"
   },
   "resolutions": {

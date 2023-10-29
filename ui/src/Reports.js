@@ -19,6 +19,9 @@ import AllocationService from './services/allocation';
 import { checkCustomWindow, cumulativeToTotals, rangeToCumulative, toVerboseTimeRange } from './util';
 import { currencyCodes } from './constants/currencyCodes'
 
+import axios from 'axios'
+import * as qs from 'querystring'
+
 const windowOptions = [
   { name: 'Today', value: 'today' },
   { name: 'Yesterday', value: 'yesterday' },
@@ -84,8 +87,79 @@ function generateTitle({ window, aggregateBy, accumulate }) {
   return str
 }
 
+async function getAccessToken(){
+  let local_token = localStorage.getItem('token')
+  if(local_token){
+    if(!isAccessTokenUnExpired()){ // if token is atleast 20 mins old
+      await fetchTokenFromIAM()
+      alert('Token is refreshed!')
+    } else {
+      console.log('Token is cached in localstorage')
+    }
+  } else {
+    await fetchTokenFromIAM()
+  }
+}
+
+function isAccessTokenUnExpired() {
+  let tokenGenerationTimestamp = parseInt(localStorage.getItem('tokenGenerationTimestamp'))
+  if(isNaN(tokenGenerationTimestamp)){
+    return false
+  }
+  let currentTimeStamp = Math.floor(Date.now() / 1000)
+  return ((currentTimeStamp - tokenGenerationTimestamp) <= (20 * 60) && localStorage.getItem('token'))
+}
+
+async function fetchTokenFromIAM(){
+  const queryParams = new URLSearchParams(window.location.search);
+  const authCode = queryParams.get('code')
+  const opencostUIBaseUrl = window.location.origin
+  const iamUrl = "http://localhost:8080"
+  const clientId = "public-type-org1-client"
+  const clientSecret = ""
+
+  if (!authCode){
+    window.location = `${iamUrl}/realms/org1/protocol/openid-connect/auth?response_type=code&client_id=${clientId}&redirect_uri=${opencostUIBaseUrl}&scope=openid&state=something`
+  } 
+  
+  let data = qs.stringify({
+    'client_id': clientId,
+    'grant_type': 'authorization_code',
+    'code': authCode,
+    'redirect_uri': opencostUIBaseUrl
+  });
+
+  const headers = { 
+    'Content-Type': 'application/x-www-form-urlencoded'
+  }
+
+  let token
+  
+  await axios.post(`${iamUrl}/realms/org1/protocol/openid-connect/token`, data, {
+    headers: headers
+  }).then(resp => {
+    token = resp.data.access_token
+    console.log(`token is ${token},`)
+    if(token){
+      let currentTimeStamp = Math.floor(Date.now() / 1000)
+      localStorage.setItem('token', token)
+      localStorage.setItem('tokenGenerationTimestamp', currentTimeStamp)
+      console.log('token in set in browser storage')
+    }
+  }).catch(err => {
+    if(err.response.status == 400 && err.response.data.error_description === 'Code not valid'){
+      window.location = `${iamUrl}/realms/org1/protocol/openid-connect/auth?response_type=code&client_id=${clientId}&redirect_uri=${opencostUIBaseUrl}&scope=openid&state=something`
+    }
+  })
+  console.log(`token is ${token}`)
+  return token
+}
 
 const ReportsPage = () => {
+  if(!isAccessTokenUnExpired()){
+    getAccessToken()
+  }    
+  console.warn(localStorage)
   const classes = useStyles()
 
   // Allocation data state
@@ -124,11 +198,11 @@ const ReportsPage = () => {
   const [errors, setErrors] = useState([])
 
   // Initialize once, then fetch report each time setFetch(true) is called
-  useEffect(() => {
+  useEffect(async () => {
     if (!init) {
-      initialize()
+      await initialize()
     }
-    if (init && fetch) {
+    if (init && fetch && isAccessTokenUnExpired()) {
       fetchData()
     }
   }, [init, fetch])
@@ -149,6 +223,7 @@ const ReportsPage = () => {
   }
 
   async function fetchData() {
+    console.log('fetching data')
     setLoading(true)
     setErrors([])
 
@@ -198,6 +273,8 @@ const ReportsPage = () => {
     setFetch(false)
   }
   return (
+    <div>
+      {isAccessTokenUnExpired() && 
     <Page active="reports.html">
       <Header>
         <IconButton aria-label="refresh" onClick={() => setFetch(true)}>
@@ -275,6 +352,8 @@ const ReportsPage = () => {
         )}
       </Paper>}
     </Page>
+    }
+    </div>
   )
 }
 
