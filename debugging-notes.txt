@@ -1,0 +1,218 @@
+opencost:
+    cmd:
+        costmodel:
+            main.go --> This is the starting point of the application
+    pkg:
+        cmd:
+            cost-model:
+                costmodel.go
+                    Execute(): This has a method called Execute which takes options
+                        Inside the Execute method:
+                            Initialize method:
+
+                                // here initialization of the prometheus and kubernetes client happens
+                                pkg/kubeconfig/loader.go --> kubeconfig golang module
+                                    LoadKubeconfig method:
+                                        A go package called k8s.io/client-go/tools/clientcmd is used to generate a kubernetes client
+                                        From doc: (Package clientcmd provides one stop shopping for building a working client from a fixed config, from a .kubeconfig file, from command line flags, or from any merged combination.)
+                                        clientcmd.NewDefaultClientConfigLoadingRules() --> this returns loadingRules 
+                                            loadingRules has a property called Precedence --> this has Precedence of kubeconfig files
+                                        
+                                        this method returns a kubernetes clientset: (return kubernetes.NewForConfig(config))
+
+                                            The clientset is a set of multiple clients (REST clients) for every group (eg. core, extensions, batch, apps, authentication), version (eg. v1) and Kind (resourcetype like Pod/Deployment)
+                                    
+                                    The env variable CONFIG_PATH represents the cost model configuration path
+                                    IsClusterCacheFileEnabled returns true if the kubernetes cluster data is read from a file or pulled from the local kubernetes API.
+
+                                
+                                
+                                As seen from the above example, the LoadKubeconfig creates an object of struct type Clientset, this struct type implements an interface called kubernetes.interface which an Interface.
+
+                                The client-go Kubernetes package is capable of running apis just like kubectl
+
+                                There exists an interface called ClusterCache, which has an implementation called KubernetesClusterCache.
+                                    KubernetesClusterCache contains caching contollers:
+                                        // CachingWatchController composites the watching behavior and a cache to ensure that all
+                                        // up to date resources are readily available
+
+                                        To get data from the cluster cache object:
+                                            for eg. items := kcc.nodeWatch.GetAll() // where kcc is kubernetesClusterCache
+
+                                        [continue from pkg/costmodel/router.go line#1596]
+
+                                    checkout goroutines from below:
+
+                                cloudProvider, err := provider.NewProvider(k8sCache, cloudProviderKey, confManager)
+                                    clusterProperties is obtained:
+                                        nodes = get all nodes from kcc (KubernetesClusterCache)
+                                        cp := getClusterProperties(nodes[0])
+                                        
+                                        NewProvider()
+                                            providerConfig := NewProviderConfig(config, cp.configFileName) 
+
+                                            // providerConfig.Update will 
+                                            providerConfig.Update(func(cp *models.CustomPricing) error {
+                                                if cp.ServiceKeyName == "AKIXXX" {
+                                                    cp.ServiceKeyName = ""
+                                                }
+                                                return nil
+                                            })
+
+                                                    Update():
+                                                        
+                                                        c, _ := pc.loadConfig(false):
+                                                            This method checks for the config file /models/aws.json
+                                                                If present 
+                                                                    the json is unmarshalled and returned as provider config
+                                                                Else
+                                                                    it is obtained from DefaultPricing()
+                                                                    pc.customPricing = DefaultPricing()
+                                                                    return pc (provider config)
+                                                        
+                                                        cj, err := json.Marshal(c)
+                                                        err = pc.configFile.Write(cj)
+                                                            This populates the /models/aws.json with the provider config
+                                                        
+                                                        So the /model/aws.json is provider.config.customPricing
+                                
+                                
+                                clusterInfoProvider = NewLocalClusterInfoProvider(kubeClientset, cloudProvider)
+                                    NewLocalClusterInfoProvider returns the following type object
+                                        type localClusterInfoProvider struct {
+                                            k8s      kubernetes.Interface
+                                            provider cloudProvider.Provider
+                                        }
+                                clusters.NewClusterMap(promCli, clusterInfoProvider, 5*time.Minute)
+                                    This creates an object of PrometheusClusterMap
+
+                                    type PrometheusClusterMap Struct {
+                                        lock        sync.RWMutex.
+                                        client:     prometheus.Client,
+                                        clusters:   map[string]*ClusterInfo,
+                                            type ClusterInfo struct {
+                                                ID          string `json:"id"`
+                                                Name        string `json:"name"`
+                                                Profile     string `json:"profile"`
+                                                Provider    string `json:"provider"`
+                                                Account     string `json:"account"`
+                                                Project     string `json:"project"`
+                                                Region      string `json:"region"`
+                                                Provisioner string `json:"provisioner"`
+                                            }
+                                        clusterInfo ClusterInfoProvider,
+                                        stop        chan struct{}
+                                    }
+
+                                    PrometheusClusterMap has a method called refreshClusters, which will pull the cluster info
+                                        refreshClusters():
+                                            prometheusClusterMap.clusters = loadClusters() --> refreshes the clusterinfo field in clustermap
+                                                As part of loadClusters method, we run a prometheus query (with a max retry of 6)
+                                                    ctx.QueryAtTime(clusterInfoQuery(offset), time.Now().Add(-promQueryOffset))
+                                                        func clusterInfoQuery(offset string) string {
+                                                            return fmt.Sprintf("kubecost_cluster_info{%s}%s", env.GetPromClusterFilter(), offset)
+                                                        }
+                                    There is an asyncronous function (within NewClusterMap method) that is capable of refreshing the cluster info periodically
+
+                            
+
+
+
+            agent:
+                agent.go
+                    This has a method called Execute which takes options
+            commands.go
+                This file contains a function Execute
+
+
+
+To create a prometheus container:
+    docker run -d --net=host -v ./prometheus.yml:/etc/prometheus/prometheus.yml --name prometheus-server prom/prometheus
+
+To create prometheus in minikube:
+    https://brain2life.hashnode.dev/prometheus-and-grafana-setup-in-minikube
+
+
+prometheus server locally
+kubectl port-forward --namespace kube-prometheus-stack service/kube-prometheus-stack-prometheus 9096:9090
+
+
+
+The following link shows how the K8s Go client performs login:
+    (Look out for the words: This example shows you how to configure a client with client-go to authenticate to the Kubernetes API from an application running outside the Kubernetes cluster)
+    https://github.com/kubernetes/client-go/tree/v0.28.2/examples/out-of-cluster-client-configuration
+
+    (This example shows you how to configure a client with client-go to authenticate to the Kubernetes API from an application running inside the Kubernetes cluster.)
+    https://github.com/kubernetes/client-go/tree/v0.28.2/examples/in-cluster-client-configuration
+
+    go client example: https://pkg.go.dev/k8s.io/client-go/examples#section-readme
+
+    
+continue from:    
+    kubeconfig/loader.go
+
+
+references:
+    https://pkg.go.dev/k8s.io/client-go/tools/clientcmd
+
+GOLANG:
+
+    What is the difference between struct and interface?
+    interface declares some methods without a definition:
+        // Creating an interface 
+        type tank interface { 
+        
+            // Methods 
+            Tarea() float64 
+            Volume() float64 
+        } 
+
+        struct can implement an interface, by just implementing all methods of the interface.
+            type myvalue struct { 
+                radius float64 
+                height float64 
+            } 
+            
+            // Implementing methods of 
+            // the tank interface 
+            func (m myvalue) Tarea() float64 { 
+            
+                return 2*m.radius*m.height + 
+                    2*3.14*m.radius*m.radius 
+            } 
+            
+            func (m myvalue) Volume() float64 { 
+            
+                return 3.14 * m.radius * m.radius * m.height 
+            }
+
+            // Main Method 
+            func main() { 
+            
+                // Accessing elements of 
+                // the tank interface 
+                var t tank                              /////////   <--- Interface tank can store struct object of myvalue
+                t = myvalue{10, 14} 
+                fmt.Println("Area of tank :", t.Tarea()) 
+                fmt.Println("Volume of tank:", t.Volume()) 
+            } 
+        
+
+    Goroutines
+    A goroutine is a function that is capable of running concurrently with other functions. To create a goroutine we use the keyword go followed by a function invocation:
+
+    package main
+
+    import "fmt"
+
+    func f(n int) {
+    for i := 0; i < 10; i++ {
+        fmt.Println(n, ":", i)
+    }
+    }
+
+    func main() {
+    go f(0)
+    var input string
+    fmt.Scanln(&input)
+    }
